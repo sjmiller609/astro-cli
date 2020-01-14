@@ -1,0 +1,72 @@
+version: 2.1
+jobs:
+  new-tag:
+    executor: docker-executor
+    steps:
+      - checkout
+      - commit-next-tag
+  release:
+    docker:
+      - image: astronomerio/goreleaser:v0.0.2
+    steps:
+      - checkout
+      - run:
+          name: Release to GitHub
+          command: |
+            set -xe
+            git fetch --tags
+            goreleaser release --rm-dist
+workflows:
+  version: 2.1
+  build-images:
+    jobs:
+      - approve-release:
+          type: approval
+          filters:
+            branches:
+              only: '/release-.*/'
+      - new-tag:
+          requires:
+            - approve-release
+          filters:
+            branches:
+              only: '/release-.*/'
+      - release:
+          # Only run this job on git tag pushes
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*(-.*)*/
+executors:
+  docker-executor:
+    environment:
+      GIT_ORG: sjmiller609
+      DOCKER_REPO: astronomerinc
+    docker:
+      - image: circleci/python:3
+commands:
+  commit-next-tag:
+    description: "Tag the commit to the release branch major.minor with the patch number incremented by one"
+    parameters:
+      organization:
+        type: string
+        default: $GIT_ORG
+      repository:
+        type: string
+        default: $CIRCLE_PROJECT_REPONAME
+    steps:
+      - run:
+          name: Determine the next version
+          command: |
+            set -e
+            pip install --user PyGithub packaging
+            NEXT_TAG=$(python .circleci/next_version.py)
+            # Make this environment variable available to following steps
+            echo "export NEXT_TAG=v${NEXT_TAG}" >> $BASH_ENV
+      - run:
+          name: Tag the Git commit
+          command: |
+            set -xe
+            git tag $NEXT_TAG
+            git push origin $NEXT_TAG
